@@ -1,0 +1,118 @@
+#!/usr/bin/env python3
+import os
+import sys
+import shutil
+import urllib.request
+import tarfile
+import json
+import re
+
+# --- CONFIGURATION ---
+TARGET_TOOL = "ffmpeg"
+# Grabbing the long-term supported stable release static target (AMD64 Architecture)
+DOWNLOAD_URL = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
+
+BUILD_DIR = "./build_ffmpeg"
+OUTPUT_DIR = "./dist_assets"
+FINAL_ARCHIVE_PATH = os.path.join(OUTPUT_DIR, f"{TARGET_TOOL}_package.tar.gz")
+METADATA_JSON_PATH = os.path.join(OUTPUT_DIR, f"{TARGET_TOOL}_metadata.json")
+
+def setup_environment():
+    """Wipes stale targets and structures output directories."""
+    print("[*] Preparing scratch environment...")
+    for directory in [BUILD_DIR, OUTPUT_DIR]:
+        if os.path.exists(directory):
+            shutil.rmtree(directory)
+        os.makedirs(directory)
+
+def fetch_static_release():
+    """Downloads the static release tarball from the CDN."""
+    archive_target = os.path.join(BUILD_DIR, f"{TARGET_TOOL}_static.tar.xz")
+    print(f"[*] Downloading optimized static multi-codec {TARGET_TOOL} bundle...")
+    try:
+        # User-Agent header bypasses restrictive server firewall scrap blocks
+        req = urllib.request.Request(
+            DOWNLOAD_URL, 
+            headers={'User-Agent': 'Mozilla/5.0 (CSI Linux Context Engine)'}
+        )
+        with urllib.request.urlopen(req) as response, open(archive_target, 'wb') as out_file:
+            shutil.copyfileobj(response, out_file)
+    except Exception as e:
+        print(f"[-] Critical Error: Unable to fetch remote binary bundle: {e}")
+        sys.exit(1)
+        
+    print("[*] Extracting static binary archive contents...")
+    with tarfile.open(archive_target, "r:xz") as tar:
+        tar.extractall(path=BUILD_DIR)
+    os.remove(archive_target)
+
+def isolate_and_repackage():
+    """Filters metadata fluff, unifies structural path, and packages binaries."""
+    # Find the extracted variable folder name (e.g., ffmpeg-7.0.2-amd64-static)
+    extracted_dirs = [d for d in os.listdir(BUILD_DIR) if os.path.isdir(os.path.join(BUILD_DIR, d))]
+    if not extracted_dirs:
+        print("[-] Critical Error: Extraction target resolution failed.")
+        sys.exit(1)
+    
+    source_folder_path = os.path.join(BUILD_DIR, extracted_dirs[0])
+    binaries_staging = os.path.join(BUILD_DIR, "binaries")
+    os.makedirs(binaries_staging)
+    
+    print("[*] Discovered Release Payload: " + extracted_dirs[0])
+    print("[*] Isolating tracking binaries (ffmpeg, ffprobe) and documentation licenses...")
+    
+    # We explicitly extract binaries and standard licensing parameters
+    targets = ["ffmpeg", "ffprobe", "GPLv3.txt"]
+    for target in targets:
+        src = os.path.join(source_folder_path, target)
+        if os.path.exists(src):
+            shutil.move(src, os.path.join(binaries_staging, target))
+            
+    # Compress the isolated runtime assets into our system image payload archive
+    print(f"[*] Compressing structural assets into installation tarball: {FINAL_ARCHIVE_PATH}")
+    with tarfile.open(FINAL_ARCHIVE_PATH, "w:gz") as tar:
+        tar.add(binaries_staging, arcname=TARGET_TOOL)
+
+def generate_installer_metadata():
+    """Emits the integration schema descriptor to synchronize with the installer loop."""
+    print(f"[*] Writing metadata descriptor block to {METADATA_JSON_PATH}")
+    
+    metadata = {
+        "asset_name": f"{TARGET_TOOL}_static",
+        "expected_archive": f"{TARGET_TOOL}_package.tar.gz",
+        "target_bin_destination": "/usr/local/bin",
+        "target_share_destination": f"/usr/share/licenses/{TARGET_TOOL}",
+        "execution_permissions": "0755",
+        "profile_assignments": {
+            "minimal": {
+                "action": "install",
+                "configuration": "cli_only",
+                "reason": "Retained for basic forensic stream processing/probing without graphical bindings."
+            },
+            "forensic": {
+                "action": "install",
+                "configuration": "full"
+            },
+            "workstation": {
+                "action": "install",
+                "configuration": "full"
+            }
+        }
+    }
+    
+    with open(METADATA_JSON_PATH, "w") as f:
+        json.dump(metadata, f, indent=2)
+
+def main():
+    print("=== ADAPTIVE OS PROVISIONER: ASSET COMPILER (FFMPEG ARCHITECTURE) ===")
+    setup_environment()
+    fetch_static_release()
+    isolate_and_repackage()
+    generate_installer_metadata()
+    
+    # Clean workspace sandbox
+    shutil.rmtree(BUILD_DIR)
+    print("\n[+] Stage Complete. Storage payload exported into standard output './dist_assets/'.")
+
+if __name__ == "__main__":
+    main()
